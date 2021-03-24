@@ -26,12 +26,13 @@ use futures::Future;
 
 use bytes::BytesMut;
 
-use super::*;
-use crate::frame::*;
-use crate::local_db::*;
-use crate::peer::*;
+use super::{peer, read_cid_from_hdr, BufMut, MsgHdr, HDRKEYL, KEEPALIVE};
+use crate::frame::{process_hdr, process_hdr_dummy_key, process_key, process_msg};
+use crate::local_db::MlesDb;
+use crate::peer::{clear_peer_cid, peer_conn};
 
-pub(crate) fn run(
+#[allow(clippy::too_many_lines)]
+pub fn run(
     address: SocketAddr,
     peer: Option<SocketAddr>,
     keyval: String,
@@ -74,23 +75,22 @@ pub(crate) fn run(
             if 0 != debug_flags {
                 println!("New connection: {}", addr);
             }
-            let paddr = match stream.peer_addr() {
-                Ok(paddr) => paddr,
-                Err(_) => {
-                    let addr = "0.0.0.0:0";
-                    addr.parse::<SocketAddr>().unwrap()
-                }
+            let paddr = if let Ok(paddr) = stream.peer_addr() {
+                paddr
+            } else {
+                let addr = "0.0.0.0:0";
+                addr.parse::<SocketAddr>().unwrap()
             };
             let mut is_addr_set = false;
             let mut keys = Vec::new();
-            if !keyval.is_empty() {
-                keys.push(keyval.clone());
-            } else {
+            if keyval.is_empty() {
                 keys.push(MsgHdr::addr2str(&paddr));
                 is_addr_set = true;
                 if !keyaddr.is_empty() {
                     keys.push(keyaddr.clone());
                 }
+            } else {
+                keys.push(keyval.clone());
             }
 
             let (reader, writer) = stream.split();
@@ -137,7 +137,7 @@ pub(crate) fn run(
                 let message = messages[0].clone();
 
                 //pick the verified cid from header and use it as an identifier
-                let cid = read_cid_from_hdr(&message) as u64;
+                let cid = u64::from(read_cid_from_hdr(&message));
                 let chan = channel.clone();
                 let msg = message.clone();
 
@@ -150,11 +150,11 @@ pub(crate) fn run(
                                 hist_limit,
                                 peer,
                                 is_addr_set,
-                                keyaddr_inner,
-                                chan,
-                                msg,
+                                &keyaddr_inner,
+                                &chan,
+                                &msg,
                                 &tx_peer_for_msgs_inner,
-                                tx_peer_remover_inner,
+                                &tx_peer_remover_inner,
                                 debug_flags,
                             )
                         });
@@ -177,11 +177,11 @@ pub(crate) fn run(
                                     hist_limit,
                                     peer,
                                     is_addr_set,
-                                    keyaddr_inner,
-                                    chan,
-                                    msg,
+                                    &keyaddr_inner,
+                                    &chan,
+                                    &msg,
                                     &tx_peer_for_msgs_inner,
-                                    tx_peer_remover_inner,
+                                    &tx_peer_remover_inner,
                                     debug_flags,
                                 )
                             });
@@ -294,11 +294,11 @@ pub(crate) fn run(
                                             hist_limit,
                                             peer,
                                             is_addr_set,
-                                            keyaddr,
-                                            channel,
-                                            msg,
+                                            &keyaddr,
+                                            &channel,
+                                            &msg,
                                             &tx_peer_for_msgs,
-                                            tx_peer_remover,
+                                            &tx_peer_remover,
                                             debug_flags,
                                         )
                                     });

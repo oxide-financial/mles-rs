@@ -23,29 +23,39 @@ use futures::Future;
 
 use bytes::{Bytes, BytesMut};
 
-use super::*;
-use crate::frame::*;
-use crate::local_db::*;
+use super::{
+    read_cid_from_hdr, read_hdr_len, write_hdr_with_key, write_len_to_hdr, BufMut, Msg, MsgHdr,
+    ResyncMsg, HDRKEYL, MSGMAXSIZE,
+};
+use crate::frame::{process_hdr_dummy_key, process_msg};
+use crate::local_db::MlesPeerDb;
 use crate::KEEPALIVE;
 
 const MAXWAIT: u64 = 10 * 60;
 const WAITTIME: u64 = 5;
 
+type TxPeerMsgs = UnboundedSender<(
+    u64,
+    String,
+    UnboundedSender<Bytes>,
+    UnboundedSender<UnboundedSender<Bytes>>,
+)>;
+
 /// Initiate peer connection
-pub(crate) fn peer_conn(
+#[allow(
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::module_name_repetitions
+)]
+pub fn peer_conn(
     hist_limit: usize,
     peer: SocketAddr,
     is_addr_set: bool,
-    keyaddr: String,
-    channel: String,
-    msg: Bytes,
-    tx_peer_for_msgs: &UnboundedSender<(
-        u64,
-        String,
-        UnboundedSender<Bytes>,
-        UnboundedSender<UnboundedSender<Bytes>>,
-    )>,
-    tx_peer_remover: UnboundedSender<(String, u64)>,
+    keyaddr: &str,
+    channel: &str,
+    msg: &Bytes,
+    tx_peer_for_msgs: &TxPeerMsgs,
+    tx_peer_remover: &UnboundedSender<(String, u64)>,
     debug_flags: u64,
 ) {
     let mut runtime = Runtime::new().unwrap();
@@ -53,10 +63,10 @@ pub(crate) fn peer_conn(
     let mles_peer_db = Rc::new(RefCell::new(MlesPeerDb::new(hist_limit)));
 
     loop {
-        let channel = channel.clone();
+        let channel = channel.to_string();
         let tx_peer_for_msgs = tx_peer_for_msgs.clone();
         let mut msg = msg.clone();
-        let keyaddr = keyaddr.clone();
+        let keyaddr = keyaddr.to_string();
 
         let tcp = TcpStream::connect(&peer);
 
@@ -69,7 +79,12 @@ pub(crate) fn peer_conn(
 
         //distribute channels
         let _res = tx_peer_for_msgs
-            .unbounded_send((peer_cid, channel.clone(), tx.clone(), tx_orig_chan.clone()))
+            .unbounded_send((
+                peer_cid,
+                channel.to_string(),
+                tx.clone(),
+                tx_orig_chan.clone(),
+            ))
             .map_err(|err| {
                 println!("Cannot send from peer: {}", err);
             });
@@ -80,12 +95,11 @@ pub(crate) fn peer_conn(
         let tx_peer_remover_err = tx_peer_remover.clone();
         let client = tcp
             .and_then(move |pstream| {
-                let laddr = match pstream.local_addr() {
-                    Ok(laddr) => laddr,
-                    Err(_) => {
-                        let addr = "0.0.0.0:0";
-                        addr.parse::<SocketAddr>().unwrap()
-                    }
+                let laddr = if let Ok(laddr) = pstream.local_addr() {
+                    laddr
+                } else {
+                    let addr = "0.0.0.0:0";
+                    addr.parse::<SocketAddr>().unwrap()
                 };
                 let _val = pstream
                     .set_nodelay(true)
@@ -110,7 +124,7 @@ pub(crate) fn peer_conn(
                     let message = msg.split_off(HDRKEYL);
                     if is_addr_set {
                         msg = update_key(
-                            Msg::decode(message.as_ref()),
+                            &Msg::decode(message.as_ref()),
                             read_hdr_len(&msg.to_vec()),
                             keyaddr,
                             laddr,
@@ -140,7 +154,7 @@ pub(crate) fn peer_conn(
                     let message = msg.split_off(HDRKEYL);
                     if is_addr_set {
                         msg = update_key(
-                            Msg::decode(message.to_vec().as_slice()),
+                            &Msg::decode(message.to_vec().as_slice()),
                             read_hdr_len(&msg),
                             keyaddr,
                             laddr,
@@ -289,22 +303,22 @@ pub(crate) fn peer_conn(
     }
 }
 
-pub(crate) fn set_peer_cid(cid: u32) -> u64 {
-    (cid as u64) | 1 << 32
+pub fn set_peer_cid(cid: u32) -> u64 {
+    u64::from(cid) | 1 << 32
 }
 
-pub(crate) fn clear_peer_cid(cid: u64) -> u64 {
+pub const fn clear_peer_cid(cid: u64) -> u64 {
     (cid as u32) as u64
 }
 
 fn update_key(
-    decoded_message: Msg,
+    decoded_message: &Msg,
     len: usize,
     keyaddr: String,
     laddr: std::net::SocketAddr,
 ) -> Bytes {
-    let mut keys = Vec::new();
-    keys.push(MsgHdr::addr2str(&laddr));
+    let mut keys = vec![MsgHdr::addr2str(&laddr)];
+
     if !keyaddr.is_empty() {
         keys.push(keyaddr);
     }
@@ -325,6 +339,7 @@ fn update_key(
 /// let sockaddr = None;
 /// assert_eq!(false, has_peer(&sockaddr));
 /// ```
+#[allow(clippy::module_name_repetitions)]
 pub fn has_peer(peer: &Option<SocketAddr>) -> bool {
     if let Some(peer) = *peer {
         return peer.port() != 0;
@@ -340,7 +355,7 @@ mod tests {
     #[test]
     fn test_peer_set_cid() {
         let val: u32 = 1;
-        assert_eq!(0x0000000100000001, set_peer_cid(val));
+        assert_eq!(0x0000_0001_0000_0001, set_peer_cid(val));
     }
 
     #[test]

@@ -10,16 +10,16 @@ use bytes::{Bytes, BytesMut};
 use tokio::io;
 use tokio::net::TcpStream;
 
-use super::*;
+use super::{read_hdr_len, read_hdr_type, read_key_from_hdr, Msg, MsgHdr, ResyncMsg, HDRKEYL};
 
-pub(crate) fn process_hdr_dummy_key(
+pub fn process_hdr_dummy_key(
     reader: io::ReadHalf<TcpStream>,
     hdr_key: BytesMut,
 ) -> Result<(io::ReadHalf<TcpStream>, BytesMut, usize), Error> {
     process_hdr(reader, hdr_key)
 }
 
-pub(crate) fn process_hdr(
+pub fn process_hdr(
     reader: io::ReadHalf<TcpStream>,
     hdr: BytesMut,
 ) -> Result<(io::ReadHalf<TcpStream>, BytesMut, usize), Error> {
@@ -36,7 +36,7 @@ pub(crate) fn process_hdr(
     Ok((reader, hdr, hdr_len))
 }
 
-pub(crate) fn process_msg(
+pub fn process_msg(
     reader: io::ReadHalf<TcpStream>,
     hdr_key: BytesMut,
     message: BytesMut,
@@ -47,7 +47,7 @@ pub(crate) fn process_msg(
     Ok((reader, hdr_key, message))
 }
 
-pub(crate) fn process_key(
+pub fn process_key(
     reader: io::ReadHalf<TcpStream>,
     hdr_key: BytesMut,
     message: BytesMut,
@@ -80,14 +80,14 @@ fn message_decode(message: BytesMut, mut hdr_key: BytesMut) -> Vec<Bytes> {
     //try first decoding as a resync
     let mut msgs = Vec::new();
     let decoded_resync_message: ResyncMsg = ResyncMsg::decode(message.as_ref());
-    if 0 != decoded_resync_message.len() {
-        for msg in decoded_resync_message.get_messages() {
-            msgs.push(Bytes::from(msg));
-        }
-    } else {
+    if decoded_resync_message.is_empty() {
         hdr_key.unsplit(message);
         let msg = hdr_key.freeze();
         msgs.push(msg);
+    } else {
+        for msg in decoded_resync_message.get_messages() {
+            msgs.push(Bytes::from(msg));
+        }
     }
     msgs
 }
@@ -95,25 +95,25 @@ fn message_decode(message: BytesMut, mut hdr_key: BytesMut) -> Vec<Bytes> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{write_hdr, write_key};
+    use bytes::BufMut;
 
     #[test]
     fn test_message_decode() {
         let uid = "User".to_string();
         let channel = "Channel".to_string();
-        let mut keys = Vec::new();
-        keys.push(uid.clone());
-        keys.push(channel.clone());
+        let keys = vec![uid.clone(), channel.clone()];
         let key = MsgHdr::do_hash(&keys);
         let mut hdr: BytesMut = write_hdr(122, MsgHdr::select_cid(key));
         let keyhdr: BytesMut = write_key(key);
         hdr.extend(keyhdr);
-        let hdrkey = hdr.clone();
+        let hdrkey = hdr;
         let msg = "a test msg".to_string().into_bytes();
         let orig_msg = Msg::new(uid, channel, msg);
         let encoded_msg = orig_msg.encode();
         let mut buf = BytesMut::with_capacity(encoded_msg.len());
         buf.put_slice(&encoded_msg);
-        let messages = message_decode(buf, BytesMut::from(hdrkey));
+        let messages = message_decode(buf, hdrkey);
         assert_eq!(1, messages.len());
         let mut message = messages[0].clone();
         let msg = message.split_off(HDRKEYL);
@@ -127,9 +127,7 @@ mod tests {
     fn test_message_resync_decode() {
         let uid = "User".to_string();
         let channel = "Channel".to_string();
-        let mut keys = Vec::new();
-        keys.push(uid.clone());
-        keys.push(channel.clone());
+        let keys = vec![uid.clone(), channel.clone()];
         let key = MsgHdr::do_hash(&keys);
         let mut hdr: BytesMut = write_hdr(122, MsgHdr::select_cid(key));
         let keyhdr: BytesMut = write_key(key);
@@ -139,12 +137,12 @@ mod tests {
         let orig_msg = Msg::new(uid, channel, msg);
         let encoded_msg = orig_msg.encode();
         hdr.extend(encoded_msg);
-        let vec = vec![hdr.clone().to_vec()];
+        let vec = vec![hdr.to_vec()];
         let rmsg = ResyncMsg::new(&vec);
         let encoded_resync_msg: Vec<u8> = rmsg.encode();
         let mut buf = BytesMut::with_capacity(encoded_resync_msg.len());
         buf.put_slice(&encoded_resync_msg);
-        let messages = message_decode(buf, BytesMut::from(hdrkey));
+        let messages = message_decode(buf, hdrkey);
         assert_eq!(1, messages.len());
         let mut message = messages[0].clone();
         let msg = message.split_off(HDRKEYL);
@@ -158,19 +156,17 @@ mod tests {
     fn test_message_resync_multi_decode() {
         let uid = "User".to_string();
         let channel = "Channel".to_string();
-        let mut keys = Vec::new();
-        keys.push(uid.clone());
-        keys.push(channel.clone());
+        let keys = vec![uid.clone(), channel.clone()];
         let key = MsgHdr::do_hash(&keys);
         let mut hdr: BytesMut = write_hdr(122, MsgHdr::select_cid(key));
         let keyhdr: BytesMut = write_key(key);
         hdr.extend(keyhdr);
-        let hdrkey = hdr.clone().to_vec();
+        let hdrkey = hdr.to_vec();
         let msg = "a test msg".to_string().into_bytes();
         let orig_msg = Msg::new(uid, channel, msg);
         let encoded_msg = orig_msg.encode();
         hdr.extend(encoded_msg);
-        let vec = vec![hdr.clone().to_vec(), hdr.clone().to_vec()];
+        let vec = vec![hdr.to_vec(), hdr.to_vec()];
         let rmsg = ResyncMsg::new(&vec);
         let encoded_resync_msg: Vec<u8> = rmsg.encode();
         let mut buf = BytesMut::with_capacity(encoded_resync_msg.len());

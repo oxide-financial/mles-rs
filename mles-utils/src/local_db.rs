@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 
-pub(crate) struct MlesDb {
+pub struct MlesDb {
     channels: Option<HashMap<u64, UnboundedSender<Bytes>>>,
     messages: Vec<Bytes>,
     peer_tx: Option<UnboundedSender<UnboundedSender<Bytes>>>,
@@ -18,8 +18,8 @@ pub(crate) struct MlesDb {
 }
 
 impl MlesDb {
-    pub fn new(hlim: usize) -> MlesDb {
-        MlesDb {
+    pub fn new(hlim: usize) -> Self {
+        Self {
             channels: None,
             messages: Vec::with_capacity(hlim),
             peer_tx: None,
@@ -28,11 +28,11 @@ impl MlesDb {
         }
     }
 
-    pub fn get_channels(&self) -> Option<&HashMap<u64, UnboundedSender<Bytes>>> {
+    pub const fn get_channels(&self) -> Option<&HashMap<u64, UnboundedSender<Bytes>>> {
         self.channels.as_ref()
     }
 
-    pub fn get_messages(&self) -> &Vec<Bytes> {
+    pub const fn get_messages(&self) -> &Vec<Bytes> {
         &self.messages
     }
 
@@ -40,7 +40,7 @@ impl MlesDb {
         self.messages.len()
     }
 
-    pub fn get_tx_db(&self) -> &Vec<UnboundedSender<Bytes>> {
+    pub const fn get_tx_db(&self) -> &Vec<UnboundedSender<Bytes>> {
         &self.tx_db
     }
 
@@ -52,11 +52,11 @@ impl MlesDb {
         self.tx_db.push(tx);
     }
 
-    pub fn get_history_limit(&self) -> usize {
+    pub const fn get_history_limit(&self) -> usize {
         self.history_limit
     }
 
-    pub fn get_peer_tx(&self) -> Option<&UnboundedSender<UnboundedSender<Bytes>>> {
+    pub const fn get_peer_tx(&self) -> Option<&UnboundedSender<UnboundedSender<Bytes>>> {
         self.peer_tx.as_ref()
     }
 
@@ -71,7 +71,7 @@ impl MlesDb {
 
     pub fn check_for_duplicate_cid(&self, cid: u32) -> bool {
         if let Some(ref channels) = self.channels {
-            if channels.contains_key(&(cid as u64)) {
+            if channels.contains_key(&u64::from(cid)) {
                 return true;
             }
         }
@@ -109,12 +109,12 @@ impl MlesDb {
         self.peer_tx = None;
     }
 
-    pub fn check_peer(&self) -> bool {
+    pub const fn check_peer(&self) -> bool {
         self.peer_tx.is_some()
     }
 }
 
-pub(crate) struct MlesPeerDb {
+pub struct MlesPeerDb {
     channels: HashMap<u64, UnboundedSender<Bytes>>,
     messages: Vec<Bytes>,
     history_limit: usize,
@@ -123,8 +123,8 @@ pub(crate) struct MlesPeerDb {
 }
 
 impl MlesPeerDb {
-    pub fn new(hlim: usize) -> MlesPeerDb {
-        MlesPeerDb {
+    pub fn new(hlim: usize) -> Self {
+        Self {
             channels: HashMap::new(),
             messages: Vec::with_capacity(hlim),
             history_limit: hlim,
@@ -133,7 +133,7 @@ impl MlesPeerDb {
         }
     }
 
-    pub fn get_channels(&self) -> &HashMap<u64, UnboundedSender<Bytes>> {
+    pub const fn get_channels(&self) -> &HashMap<u64, UnboundedSender<Bytes>> {
         &self.channels
     }
 
@@ -164,11 +164,11 @@ impl MlesPeerDb {
         self.messages.push(message);
     }
 
-    pub fn get_messages(&self) -> &Vec<Bytes> {
+    pub const fn get_messages(&self) -> &Vec<Bytes> {
         &self.messages
     }
 
-    pub fn get_history_limit(&self) -> usize {
+    pub const fn get_history_limit(&self) -> usize {
         self.history_limit
     }
 
@@ -184,7 +184,7 @@ impl MlesPeerDb {
         self.tx_stats += 1;
     }
 
-    pub fn get_rx_stats(&self) -> u64 {
+    pub const fn get_rx_stats(&self) -> u64 {
         self.rx_stats
     }
 
